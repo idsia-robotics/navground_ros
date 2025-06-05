@@ -6,7 +6,7 @@ This package provides a ROS 2 node wrapping the navground core C++ library expos
 
 ## Documentation
 
-For more information, we refer to the [project documentation](https://idsia-robotics.github.io/navground_coppeliasim) that contains also detailed installation instructions.
+For more information, we refer to the [project documentation](https://idsia-robotics.github.io/navground_ros) that contains also detailed installation instructions.
 
 ## License and copyright
 
