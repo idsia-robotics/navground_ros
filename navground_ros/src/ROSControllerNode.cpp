@@ -81,6 +81,10 @@ make_kinematics(const std::string &name, ng_float_t max_speed,
       wk->set_max_acceleration(max_acceleration);
       wk->set_max_angular_acceleration(max_angular_acceleration);
     }
+    if (FourWheelsOmniDriveKinematics *wk =
+            dynamic_cast<FourWheelsOmniDriveKinematics *>(kinematics.get())) {
+      wk->set_wheel_axis(axis);
+    }
     return kinematics;
   }
   return std::make_shared<OmnidirectionalKinematics>(max_speed,
@@ -339,12 +343,13 @@ private:
         HLBehavior *hl = dynamic_cast<HLBehavior *>(behavior);
         if (hl) {
           // TODO(Jerome): should publish them only when moving, not turning
-          markers_pub.publish_hl_collisions(hl->get_collision_angles(),
+          markers_pub.publish_hl_collisions(hl->get_collision_angles() -
+                                                behavior->get_orientation(),
                                             hl->get_collision_distance());
         }
         if (behavior) {
           markers_pub.publish_desired_velocity(
-              behavior->get_desired_velocity());
+              behavior->to_relative(behavior->get_desired_velocity()));
         }
       }
     }
@@ -357,7 +362,7 @@ private:
       return transform_from(
           tf_buffer->lookupTransform(from, to, tf2::TimePointZero).transform);
     } catch (tf2::TransformException &ex) {
-      RCLCPP_ERROR(get_logger(), "No transform from %s to %s: %s", from.c_str(),
+      RCLCPP_DEBUG(get_logger(), "No transform from %s to %s: %s", from.c_str(),
                    to.c_str(), ex.what());
       return std::nullopt;
     }
@@ -440,8 +445,9 @@ private:
         if (!t)
           return std::nullopt;
       }
-      const auto linear = t->linear() * vector_from(msg.twist.twist.linear);
-      const auto angular = t->linear() * vector_from(msg.twist.twist.angular);
+      const Vector3 linear = t->linear() * vector_from(msg.twist.twist.linear);
+      const Vector3 angular =
+          t->linear() * vector_from(msg.twist.twist.angular);
       twist = {linear, angular.z()};
     }
     return std::make_tuple(pose, twist);
@@ -453,13 +459,18 @@ private:
     if (!odom)
       return;
     const auto &[pose, twist] = *odom;
-    RCLCPP_INFO(get_logger(),
-                "Odom -> %.2f %.2f %.2f %.2f-- %.2f %.2f %.2f %.2f",
-                pose.position.x(), pose.position.y(), pose.position.z(),
-                pose.orientation, twist.velocity.x(), twist.velocity.y(),
-                twist.velocity.z(), twist.angular_speed);
+    // RCLCPP_INFO(get_logger(),
+    //             "Odom -> %.2f %.2f %.2f %.2f-- %.2f %.2f %.2f %.2f",
+    //             pose.position.x(), pose.position.y(), pose.position.z(),
+    //             pose.orientation, twist.velocity.x(), twist.velocity.y(),
+    //             twist.velocity.z(), twist.angular_speed);
     controller.set_twist(twist);
     controller.set_pose(pose);
+    if (markers_pub.enabled) {
+      const auto behavior = controller.get_behavior();
+      markers_pub.publish_ego(pose, twist, behavior->get_radius(),
+                              behavior->get_safety_margin(), fixed_frame);
+    }
   }
 
   void target_point_cb(const geometry_msgs::msg::PointStamped &msg) {
@@ -543,7 +554,8 @@ private:
       goal_handle->abort(r);
       goal_handle = nullptr;
     } else if (target_point) {
-      RCLCPP_WARN(get_logger(), "go_to_position");
+      RCLCPP_INFO(get_logger(), "Starting action towards point (%.3f, %.3f)",
+                  target_point->x(), target_point->y());
       auto action =
           controller.go_to_position(*target_point, goal->position_tolerance);
       action->running_cb = std::bind(&ROSControllerNode::running, this, _1);
@@ -553,7 +565,10 @@ private:
                                    goal->position_tolerance);
       }
     } else {
-      RCLCPP_WARN(get_logger(), "go_to_pose");
+      RCLCPP_INFO(get_logger(),
+                  "Starting action towards pose ((%.3f, %.3f), %.3f)",
+                  target_pose->position.x(), target_pose->position.y(),
+                  target_pose->orientation);
       auto action = controller.go_to_pose(
           *target_pose, goal->position_tolerance, goal->orientation_tolerance);
       action->running_cb = std::bind(&ROSControllerNode::running, this, _1);
@@ -644,14 +659,12 @@ private:
   void init_params() {
     auto param_desc = rcl_interfaces::msg::ParameterDescriptor{};
     param_desc.read_only = true;
-    auto kinematics = make_kinematics(
-        declare_parameter("kinematics.type", std::string("2WDiff"), param_desc),
-        declare_parameter("kinematics.max_speed", 1.0, param_desc),
-        declare_parameter("kinematics.max_angular_speed", 1.0, param_desc),
-        declare_parameter("kinematics.wheel_axis", 1.0, param_desc),
-        declare_parameter("kinematics.max_acceleration", 1.0, param_desc),
-        declare_parameter("kinematics.max_angular_acceleration", 0.0,
-                          param_desc));
+    declare_parameter("kinematics.type", std::string("2WDiff"), param_desc);
+    declare_parameter("kinematics.max_speed", 1.0, param_desc);
+    declare_parameter("kinematics.max_angular_speed", 1.0, param_desc);
+    declare_parameter("kinematics.wheel_axis", 1.0, param_desc);
+    declare_parameter("kinematics.max_acceleration", 1.0, param_desc);
+    declare_parameter("kinematics.max_angular_acceleration", 0.0, param_desc);
     declare_parameter("radius", 0.0, param_desc);
     should_publish_cmd_stamped =
         declare_parameter("publish_cmd_stamped", false, param_desc);
@@ -693,6 +706,16 @@ private:
     declare_parameter("behavior", "HL", param_desc);
   }
 
+  void set_kinematics(const std::shared_ptr<Behavior> behavior) {
+    behavior->set_kinematics(make_kinematics(
+        get_parameter("kinematics.type").as_string(),
+        get_parameter("kinematics.max_speed").as_double(),
+        get_parameter("kinematics.max_angular_speed").as_double(),
+        get_parameter("kinematics.wheel_axis").as_double(),
+        get_parameter("kinematics.max_acceleration").as_double(),
+        get_parameter("kinematics.max_angular_acceleration").as_double()));
+  }
+
   void set_behavior(std::string type) {
     auto behavior = controller.get_behavior();
     if (behavior && behavior->get_type() == type)
@@ -713,6 +736,7 @@ private:
     // -- MAYBE
 
     auto new_behavior = Behavior::make_type(type);
+    set_kinematics(new_behavior);
 
     // MAYBE: move this to the core lib
     if (effective_center) {
@@ -735,6 +759,7 @@ private:
     if (behavior) {
       new_behavior->set_state_from(*behavior);
     } else {
+      new_behavior->set_radius(get_parameter("radius").as_double());
       new_behavior->set_optimal_speed(
           get_parameter("optimal_speed").as_double());
       new_behavior->set_optimal_angular_speed(

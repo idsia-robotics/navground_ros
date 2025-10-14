@@ -296,26 +296,26 @@ struct MarkersPublisher {
 
   void publish_neighbors(const std::vector<Neighbor3> neighbors,
                          const std::string &frame_id) {
-    publish_obstacles_(neighbors, frame_id, "neighbors");
+    publish_obstacles_(neighbors, frame_id, "neighbors", 0);
     publish_velocities(neighbors, frame_id, "neighbors/velocity");
   }
 
   void publish_obstacles(const std::vector<Cylinder> obstacles,
                          const std::string &frame_id) {
-    publish_obstacles_(obstacles, frame_id, "obstacles");
+    publish_obstacles_(obstacles, frame_id, "obstacles", 1);
   }
 
   template <typename T>
   void publish_obstacles_(const std::vector<T> obstacles,
                           const std::string &frame_id,
-                          const std::string &marker_ns) {
+                          const std::string &marker_ns, int type) {
     visualization_msgs::msg::MarkerArray msg;
     msg.markers.reserve(obstacles.size() + 1);
     unsigned i = 0;
     msg.markers.push_back(clear_obstacles(marker_ns));
     for (const auto &obstacle : obstacles) {
       msg.markers.push_back(
-          obstacle_marker(obstacle, frame_id, i++, marker_ns, 1));
+          obstacle_marker(obstacle, frame_id, i++, marker_ns, type));
     }
     pub->publish(msg);
   }
