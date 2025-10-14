@@ -1,5 +1,4 @@
 // RVIZ Drawing (Just for debugging)
-
 #ifndef MARKERS_PUBLISHER_HPP_
 #define MARKERS_PUBLISHER_HPP_
 
@@ -21,6 +20,7 @@ using navground::core::Cylinder;
 using navground::core::Neighbor3;
 using navground::core::orientation_of;
 using navground::core::Pose3;
+using navground::core::Twist3;
 using navground::core::unit3;
 using navground::core::Vector2;
 using navground::core::Vector3;
@@ -42,9 +42,7 @@ struct MarkersPublisher {
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub;
 
   MarkersPublisher(rclcpp::Node &node)
-      : node(node),
-        ns(node.get_effective_namespace()),
-        obstacleIndex(0),
+      : node(node), ns(node.get_effective_namespace()), obstacleIndex(0),
         enabled(false) {
     pub = node.create_publisher<visualization_msgs::msg::MarkerArray>("markers",
                                                                       10);
@@ -57,21 +55,21 @@ struct MarkersPublisher {
     return value;
   }
 
-  visualization_msgs::msg::Marker desired_velocity_marker(
-      const Vector2 &relative_velocity) {
+  visualization_msgs::msg::Marker
+  desired_velocity_marker(const Vector2 &velocity,
+                          const std::string &frame_id) {
     visualization_msgs::msg::Marker marker;
-    marker.header.frame_id = add_ns("base_link");
-    // marker.header.stamp = node.now();
+    marker.header.frame_id = frame_id;
     marker.id = 0;
     marker.ns = add_ns("hl_desired_velocity");
     marker.type = visualization_msgs::msg::Marker::ARROW;
 
-    marker.scale.x = std::max<double>(0, relative_velocity.norm());
+    marker.scale.x = std::max<double>(0, velocity.norm());
     marker.scale.y = 0.05;
     marker.scale.z = 0.05;
 
     tf2::Quaternion quat_tf;
-    quat_tf.setRPY(0.0, 0.0, orientation_of(relative_velocity));
+    quat_tf.setRPY(0.0, 0.0, orientation_of(velocity));
     tf2::convert(quat_tf, marker.pose.orientation);
 
     marker.color.r = 1.0f;
@@ -82,15 +80,17 @@ struct MarkersPublisher {
     return marker;
   }
 
-  void publish_desired_velocity(const Vector2 &relative_velocity) {
+  void publish_desired_velocity(const Vector2 &velocity) {
     visualization_msgs::msg::MarkerArray msg;
-    msg.markers.push_back(desired_velocity_marker(relative_velocity));
+    msg.markers.push_back(
+        desired_velocity_marker(velocity, add_ns("base_link")));
     pub->publish(msg);
   }
 
-  visualization_msgs::msg::Marker hl_collisions_marker(
-      const std::valarray<ng_float_t> &angles, const std::valarray<ng_float_t> &ranges,
-      float margin = 0.0) {
+  visualization_msgs::msg::Marker
+  hl_collisions_marker(const std::valarray<ng_float_t> &angles,
+                       const std::valarray<ng_float_t> &ranges,
+                       float margin = 0.0) {
     visualization_msgs::msg::Marker lines;
     lines.header.frame_id = add_ns("base_link");
     // lines.header.stamp = node.now();
@@ -105,7 +105,8 @@ struct MarkersPublisher {
     lines.color.a = 1.0f;
     lines.lifetime = rclcpp::Duration(0, 0);
     for (size_t i = 0; i < angles.size(); ++i) {
-      if (ranges[i] < 0) continue;
+      if (ranges[i] < 0)
+        continue;
       lines.points.push_back(to_msg((margin + ranges[i]) * unit3(angles[i])));
     }
     return lines;
@@ -145,9 +146,9 @@ struct MarkersPublisher {
     return marker;
   }
 
-  visualization_msgs::msg::Marker orientation_marker(
-      const Pose3 &pose, const std::string &frame_id, float tolerance = 0.0f,
-      float length = 0.2f) {
+  visualization_msgs::msg::Marker
+  orientation_marker(const Pose3 &pose, const std::string &frame_id,
+                     float tolerance = 0.0f, float length = 0.2f) {
     visualization_msgs::msg::Marker marker;
     marker.header.frame_id = frame_id;
     // marker.header.stamp = node.now();
@@ -188,16 +189,50 @@ struct MarkersPublisher {
 
   std_msgs::msg::ColorRGBA color_for_type([[maybe_unused]] unsigned type) {
     std_msgs::msg::ColorRGBA c;
-    c.r = 1.0f;
-    c.g = 1.0f;
-    c.b = 0.0f;
-    c.a = 0.8;
+    if (type == 0) {
+      c.r = 1.0f;
+      c.g = 1.0f;
+      c.b = 0.0f;
+      c.a = 0.8;
+    } else if (type == 1) {
+      c.r = 0.5f;
+      c.g = 0.5f;
+      c.b = 0.5f;
+      c.a = 0.8;
+    } else {
+      c.r = 0.0f;
+      c.g = 1.0f;
+      c.b = 0.0f;
+      c.a = 0.8;
+    }
     return c;
   }
 
-  visualization_msgs::msg::Marker obstacle_marker(
-      const Cylinder &obstacle, const std::string &frame_id, unsigned id,
-      const std::string &marker_ns) {
+  visualization_msgs::msg::Marker
+  velocity_marker(const Neighbor3 &neighbor, const std::string &frame_id,
+                  unsigned id, const std::string &marker_ns, int type = 0) {
+    visualization_msgs::msg::Marker marker;
+    marker.header.frame_id = frame_id;
+    marker.id = id;
+    marker.ns = add_ns(marker_ns);
+    marker.type = visualization_msgs::msg::Marker::ARROW;
+    marker.pose.position.x = neighbor.position.x();
+    marker.pose.position.y = neighbor.position.y();
+    marker.pose.position.z = neighbor.position.z() + neighbor.height * 0.5;
+    marker.scale.x = std::max<double>(0, neighbor.velocity.norm());
+    marker.scale.y = neighbor.radius;
+    marker.scale.z = std::max<double>(0.1, neighbor.height);
+    tf2::Quaternion quat_tf;
+    quat_tf.setRPY(0.0, 0.0, orientation_of(neighbor.velocity));
+    tf2::convert(quat_tf, marker.pose.orientation);
+    marker.color = color_for_type(type);
+    marker.lifetime = rclcpp::Duration(0, 0);
+    return marker;
+  }
+
+  visualization_msgs::msg::Marker
+  obstacle_marker(const Cylinder &obstacle, const std::string &frame_id,
+                  unsigned id, const std::string &marker_ns, int type = 0) {
     visualization_msgs::msg::Marker marker;
     marker.header.frame_id = frame_id;
     // marker.header.stamp = node.now();
@@ -218,24 +253,51 @@ struct MarkersPublisher {
 
     // Set the color -- be sure to set alpha to something non-zero!
 
-    marker.color = color_for_type(0);
+    marker.color = color_for_type(type);
     marker.lifetime = rclcpp::Duration(0, 0);
     // marker.lifetime = rclcpp::Duration::from_seconds(updatePeriod * 1.5);
     return marker;
   }
 
-  visualization_msgs::msg::Marker clear_obstacles(
-      const std::string &marker_ns) {
+  visualization_msgs::msg::Marker clear_markers(const std::string &marker_ns,
+                                                uint8_t type) {
     visualization_msgs::msg::Marker marker;
     // marker.header.stamp = node.now();
     marker.ns = add_ns(marker_ns);
-    marker.type = 3;
+    marker.type = type;
+    marker.id = -1;
+    marker.action = visualization_msgs::msg::Marker::DELETEALL;
     return marker;
+  }
+
+  visualization_msgs::msg::Marker
+  clear_obstacles(const std::string &marker_ns) {
+    return clear_markers(marker_ns, visualization_msgs::msg::Marker::CYLINDER);
+  }
+
+  visualization_msgs::msg::Marker clear_arrows(const std::string &marker_ns) {
+    return clear_markers(marker_ns, visualization_msgs::msg::Marker::ARROW);
+  }
+
+  void publish_ego(const Pose3 &pose, const Twist3 &twist, float radius,
+                   float safety_margin, const std::string &frame_id) {
+    visualization_msgs::msg::MarkerArray msg;
+    msg.markers.reserve(3);
+    const std::string marker_ns = "ego";
+    Neighbor3 neighbor(pose.position, radius + safety_margin, pose.position.z(),
+                       twist.project().velocity);
+    msg.markers.push_back(clear_obstacles(marker_ns));
+    msg.markers.push_back(
+        obstacle_marker(neighbor, frame_id, 0, marker_ns, -1));
+    msg.markers.push_back(
+        velocity_marker(neighbor, frame_id, 1, marker_ns, -1));
+    pub->publish(msg);
   }
 
   void publish_neighbors(const std::vector<Neighbor3> neighbors,
                          const std::string &frame_id) {
     publish_obstacles_(neighbors, frame_id, "neighbors");
+    publish_velocities(neighbors, frame_id, "neighbors/velocity");
   }
 
   void publish_obstacles(const std::vector<Cylinder> obstacles,
@@ -253,10 +315,24 @@ struct MarkersPublisher {
     msg.markers.push_back(clear_obstacles(marker_ns));
     for (const auto &obstacle : obstacles) {
       msg.markers.push_back(
-          obstacle_marker(obstacle, frame_id, i++, marker_ns));
+          obstacle_marker(obstacle, frame_id, i++, marker_ns, 1));
+    }
+    pub->publish(msg);
+  }
+
+  void publish_velocities(const std::vector<Neighbor3> neighbors,
+                          const std::string &frame_id,
+                          const std::string &marker_ns) {
+    visualization_msgs::msg::MarkerArray msg;
+    msg.markers.reserve(neighbors.size() + 1);
+    unsigned i = 0;
+    msg.markers.push_back(clear_arrows(marker_ns));
+    for (const auto &neighbor : neighbors) {
+      msg.markers.push_back(
+          velocity_marker(neighbor, frame_id, i++, marker_ns));
     }
     pub->publish(msg);
   }
 };
 
-#endif  // MARKERS_PUBLISHER_HPP_
+#endif // MARKERS_PUBLISHER_HPP_
