@@ -76,12 +76,12 @@
       <param name="kinematics.max_angular_speed" value="$(var kinematics_max_angular_speed)" />
       
       <param name="behavior" value="$(var behavior)" />
+      <param name="heading" value="$(var heading)"/>
       <param name="publish_cmd_stamped" value="$(var publish_cmd_stamped)" />
       <param name="rate" value="$(var rate)" />
 
       <param name="optimal_speed" value="$(var optimal_speed)"/>
       <param name="optimal_angular_speed" value="$(var optimal_angular_speed)"/>
-      
       <param name="rotation_tau" value="$(var rotation_tau)"/>
       <param name="horizon" value="$(var horizon)"/>
       <param name="safety_margin" value="$(var safety_margin)"/>
